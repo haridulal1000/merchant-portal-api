@@ -242,3 +242,33 @@ Postgres may not be healthy yet. Check docker compose ps and wait for (healthy).
 
 Schema changes not taking effect
 Do a full reset (see above). Tables are created on startup and are not altered automatically.
+
+### Demo data (for UI development)
+
+Populate the database with 120 merchant applications (60 per sales rep) and
+matching review history so pagination, filters, and search have realistic
+data to work against.
+
+    docker compose exec api python -m app.seed_demo
+
+Expected output:
+
+    Demo seed complete.
+      Users:        4
+      Applications: 120
+      Reviews:      90
+
+      Status breakdown:
+        APPROVED       42
+        DRAFT          18
+        REJECTED       12
+        SUBMITTED      30
+        UNDER_REVIEW   18
+
+The demo seed is idempotent — applications and reviews are wiped before
+seeding. Users and their sessions are preserved, so you will not be logged
+out.
+
+To restore the minimal 3-user seed with no applications:
+
+    docker compose exec api python -m app.seed
