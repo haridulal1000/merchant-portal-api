@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: merchant-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: merchant_user
+      POSTGRES_PASSWORD: merchant_pass
+      POSTGRES_DB: merchant_portal
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U merchant_user -d merchant_portal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: merchant-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://merchant_user:merchant_pass@postgres:5432/merchant_portal
+      JWT_ACCESS_SECRET: dev-access-secret-change-in-production
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-in-production
+      JWT_ACCESS_EXPIRES_MINUTES: "15"
+      JWT_REFRESH_EXPIRES_DAYS: "7"
+      CORS_ORIGINS: "http://localhost:4200"
+    ports:
+      - "3000:8000"
+    volumes:
+      - ./app:/app/app
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
