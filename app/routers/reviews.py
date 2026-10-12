@@ -15,14 +15,12 @@ from app.schemas import ReviewCreate, ReviewOut
 
 router = APIRouter(prefix="/applications", tags=["Reviews"])
 
-# Maps the reviewer's chosen action to the resulting application status.
 ACTION_TO_STATUS: dict[ReviewAction, ApplicationStatus] = {
     ReviewAction.APPROVE: ApplicationStatus.APPROVED,
     ReviewAction.REJECT: ApplicationStatus.REJECTED,
     ReviewAction.UNDER_REVIEW: ApplicationStatus.UNDER_REVIEW,
 }
 
-# Actions can only be recorded against applications in an active review state.
 ACTIONABLE_STATUSES = {
     ApplicationStatus.SUBMITTED,
     ApplicationStatus.UNDER_REVIEW,
@@ -35,11 +33,16 @@ def list_reviews(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Risk history for an application. SALES can only view their own."""
     app = db.get(MerchantApplication, application_id)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
+
     if current_user.role == Role.SALES and app.sales_rep_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if (
+        current_user.role == Role.REVIEWER
+        and app.assigned_reviewer_id != current_user.id
+    ):
         raise HTTPException(status_code=403, detail="Access denied")
 
     return (
@@ -58,15 +61,21 @@ def create_review(
     db: Session = Depends(get_db),
 ):
     """
-    Record a reviewer action and the accompanying risk decision.
+    Record a reviewer action + risk decision.
 
-    The action determines the resulting application status; the risk
-    decision is the reviewer's independent assessment. Both are stored
-    on the review row and become part of the audit history.
+    - REVIEWER: only on applications currently assigned to them.
+    - ADMIN:    on any SUBMITTED or UNDER_REVIEW application.
     """
     app = db.get(MerchantApplication, application_id)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    if current_user.role == Role.REVIEWER:
+        if app.assigned_reviewer_id != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not assigned to this application.",
+            )
 
     if app.status not in ACTIONABLE_STATUSES:
         raise HTTPException(

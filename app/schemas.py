@@ -30,6 +30,16 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class UserSummary(BaseModel):
+    """Compact user representation embedded inside other resources."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    email: str
+    role: Role
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -83,6 +93,11 @@ class ApplicationUpdate(BaseModel):
     contact_phone: str | None = Field(default=None, min_length=7, max_length=50)
 
 
+class AssignReviewerRequest(BaseModel):
+    """Set or clear the assigned reviewer for an application."""
+    reviewer_id: str | None = None
+
+
 class ApplicationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -96,7 +111,11 @@ class ApplicationOut(BaseModel):
     risk_score: float | None
     risk_decision: RiskDecision | None
     submitted_at: datetime | None
-    sales_rep_id: str
+    assigned_at: datetime | None
+
+    sales_rep: UserSummary
+    assigned_reviewer: UserSummary | None = None
+
     created_at: datetime
     updated_at: datetime
 

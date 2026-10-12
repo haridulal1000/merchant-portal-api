@@ -2,11 +2,8 @@
 Demo data seeder for the Merchant Portal.
 
 Generates 120 merchant applications (60 per sales rep) across every status,
-with matching review history, so the dashboard's pagination, filtering, and
-search have realistic data to work against.
-
-Safe to re-run: applications and reviews are truncated before seeding,
-users and refresh tokens are left untouched.
+assigns non-draft applications to the reviewer, and creates matching review
+history.
 
 Run inside the API container:
     docker compose exec api python -m app.seed_demo
@@ -31,20 +28,12 @@ from app.security import hash_password
 
 DEFAULT_PASSWORD = "password123"
 
-# ---------------------------------------------------------------------------
-# Static user roster
-# ---------------------------------------------------------------------------
-
 EXTRA_USERS = [
     ("sales2@example.com", "Sales Rep Two", Role.SALES),
 ]
 
 SALES_REPS = ["sales@example.com", "sales2@example.com"]
 REVIEWER_EMAIL = "reviewer@example.com"
-
-# ---------------------------------------------------------------------------
-# Name generators for realistic-looking merchant data
-# ---------------------------------------------------------------------------
 
 NAME_PREFIXES = [
     "Acme", "Blue Harbor", "Nexus", "Sunrise", "Cornerstone", "Summit",
@@ -65,12 +54,8 @@ NAME_SUFFIXES = [
 ]
 
 BUSINESS_TYPES = [
-    "Retail",
-    "E-commerce",
-    "Hospitality",
-    "Professional Services",
-    "Food & Beverage",
-    "Other",
+    "Retail", "E-commerce", "Hospitality",
+    "Professional Services", "Food & Beverage", "Other",
 ]
 
 STATUS_DISTRIBUTION = [
@@ -104,7 +89,6 @@ UNDER_REVIEW_COMMENTS = [
 ]
 
 TOTAL_APPLICATIONS = 120
-
 RNG = random.Random(20261011)
 
 
@@ -136,7 +120,6 @@ def seed_demo() -> None:
 
 
 def _truncate_business_data(db: Session) -> None:
-    """Wipe applications and reviews. Keeps users and their sessions intact."""
     db.query(Review).delete()
     db.query(MerchantApplication).delete()
     db.flush()
@@ -171,6 +154,10 @@ def _generate_applications(db: Session) -> list[MerchantApplication]:
                 f"Missing sales rep: {email}. Run `python -m app.seed` first."
             )
 
+    reviewer = db.query(User).filter(User.email == REVIEWER_EMAIL).first()
+    if reviewer is None:
+        raise RuntimeError(f"Missing reviewer: {REVIEWER_EMAIL}")
+
     created: list[MerchantApplication] = []
     statuses = _status_sequence(TOTAL_APPLICATIONS)
 
@@ -184,9 +171,7 @@ def _generate_applications(db: Session) -> list[MerchantApplication]:
         annual_revenue = RNG.randint(60_000, 2_500_000)
         slug = (
             merchant_name.lower()
-            .replace(" ", "")
-            .replace("&", "and")
-            .replace(".", "")
+            .replace(" ", "").replace("&", "and").replace(".", "")
         )
         contact_email = f"contact@{slug}.test"
         contact_phone = f"+1-555-{RNG.randint(1000, 9999)}"
@@ -199,6 +184,15 @@ def _generate_applications(db: Session) -> list[MerchantApplication]:
             else None
         )
 
+        # Non-draft applications are assigned to the reviewer, matching
+        # what a real admin would have done after submission.
+        if status == ApplicationStatus.DRAFT:
+            assigned_reviewer_id = None
+            assigned_at = None
+        else:
+            assigned_reviewer_id = reviewer.id
+            assigned_at = submitted_at
+
         app = MerchantApplication(
             merchant_name=merchant_name,
             business_type=business_type,
@@ -207,6 +201,8 @@ def _generate_applications(db: Session) -> list[MerchantApplication]:
             contact_phone=contact_phone,
             status=status,
             sales_rep_id=rep.id,
+            assigned_reviewer_id=assigned_reviewer_id,
+            assigned_at=assigned_at,
             submitted_at=submitted_at,
             created_at=created_at,
             updated_at=created_at,
@@ -229,11 +225,9 @@ def _status_sequence(total: int) -> list[ApplicationStatus]:
     for status, ratio in STATUS_DISTRIBUTION:
         count = int(round(total * ratio))
         sequence.extend([status] * count)
-
     while len(sequence) < total:
         sequence.append(ApplicationStatus.SUBMITTED)
     sequence = sequence[:total]
-
     RNG.shuffle(sequence)
     return sequence
 
@@ -268,7 +262,6 @@ def _insert_reviews(db: Session, apps: list[MerchantApplication]) -> None:
 def _review_for_status(
     status: ApplicationStatus,
 ) -> tuple[ReviewAction | None, RiskDecision | None, str | None]:
-    """Return the matching (action, decision, comment) for a given status."""
     if status == ApplicationStatus.APPROVED:
         return (
             ReviewAction.APPROVE,

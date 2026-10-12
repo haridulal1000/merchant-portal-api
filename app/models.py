@@ -65,6 +65,11 @@ class User(Base):
         back_populates="sales_rep",
         foreign_keys="MerchantApplication.sales_rep_id",
     )
+    assigned_applications = relationship(
+        "MerchantApplication",
+        back_populates="assigned_reviewer",
+        foreign_keys="MerchantApplication.assigned_reviewer_id",
+    )
     reviews = relationship("Review", back_populates="reviewer")
     refresh_tokens = relationship(
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"
@@ -97,6 +102,12 @@ class MerchantApplication(Base):
     sales_rep_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=False
     )
+    assigned_reviewer_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
@@ -106,7 +117,14 @@ class MerchantApplication(Base):
     )
 
     sales_rep = relationship(
-        "User", back_populates="applications", foreign_keys=[sales_rep_id]
+        "User",
+        back_populates="applications",
+        foreign_keys=[sales_rep_id],
+    )
+    assigned_reviewer = relationship(
+        "User",
+        back_populates="assigned_applications",
+        foreign_keys=[assigned_reviewer_id],
     )
     reviews = relationship(
         "Review", back_populates="application", cascade="all, delete-orphan"
@@ -114,6 +132,7 @@ class MerchantApplication(Base):
 
     __table_args__ = (
         Index("ix_applications_sales_rep", "sales_rep_id"),
+        Index("ix_applications_assigned_reviewer", "assigned_reviewer_id"),
         Index("ix_applications_status", "status"),
     )
 
