@@ -40,6 +40,10 @@ class UserOut(BaseModel):
     created_at: datetime
 
 
+class UserRoleUpdate(BaseModel):
+    role: Role
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
