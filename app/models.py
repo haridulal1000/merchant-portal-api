@@ -37,6 +37,12 @@ class RiskDecision(str, enum.Enum):
     REJECTED = "REJECTED"
 
 
+class ReviewAction(str, enum.Enum):
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+    UNDER_REVIEW = "UNDER_REVIEW"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -123,6 +129,9 @@ class Review(Base):
     )
     reviewer_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=False
+    )
+    action: Mapped[ReviewAction] = mapped_column(
+        SAEnum(ReviewAction, name="review_action_enum"), nullable=False
     )
     decision: Mapped[RiskDecision] = mapped_column(
         SAEnum(RiskDecision, name="risk_decision_review_enum"), nullable=False

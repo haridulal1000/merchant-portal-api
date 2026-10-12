@@ -3,7 +3,12 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.models import ApplicationStatus, RiskDecision, Role
+from app.models import (
+    ApplicationStatus,
+    ReviewAction,
+    RiskDecision,
+    Role,
+)
 
 T = TypeVar("T")
 
@@ -94,6 +99,7 @@ class ApplicationOut(BaseModel):
 
 # ---------- Reviews ----------
 class ReviewCreate(BaseModel):
+    action: ReviewAction
     decision: RiskDecision
     comment: str | None = Field(default=None, max_length=2000)
 
@@ -104,6 +110,7 @@ class ReviewOut(BaseModel):
     id: str
     application_id: str
     reviewer_id: str
+    action: ReviewAction
     decision: RiskDecision
     comment: str | None
     created_at: datetime

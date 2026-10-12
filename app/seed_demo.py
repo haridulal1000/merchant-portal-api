@@ -1,7 +1,7 @@
 """
 Demo data seeder for the Merchant Portal.
 
-Generates 120+ merchant applications (60 per sales rep) across every status,
+Generates 120 merchant applications (60 per sales rep) across every status,
 with matching review history, so the dashboard's pagination, filtering, and
 search have realistic data to work against.
 
@@ -22,6 +22,7 @@ from app.models import (
     ApplicationStatus,
     MerchantApplication,
     Review,
+    ReviewAction,
     RiskDecision,
     Role,
     User,
@@ -72,7 +73,6 @@ BUSINESS_TYPES = [
     "Other",
 ]
 
-# Roughly reflects a realistic pipeline split.
 STATUS_DISTRIBUTION = [
     (ApplicationStatus.DRAFT,        0.15),
     (ApplicationStatus.SUBMITTED,    0.25),
@@ -103,10 +103,8 @@ UNDER_REVIEW_COMMENTS = [
     "Pending reference checks.",
 ]
 
-# Total applications to generate across all sales reps.
 TOTAL_APPLICATIONS = 120
 
-# Seed the RNG so runs are reproducible.
 RNG = random.Random(20261011)
 
 
@@ -137,10 +135,6 @@ def seed_demo() -> None:
         db.close()
 
 
-# ---------------------------------------------------------------------------
-# Truncation and user bootstrap
-# ---------------------------------------------------------------------------
-
 def _truncate_business_data(db: Session) -> None:
     """Wipe applications and reviews. Keeps users and their sessions intact."""
     db.query(Review).delete()
@@ -164,24 +158,20 @@ def _ensure_extra_users(db: Session) -> None:
     db.flush()
 
 
-# ---------------------------------------------------------------------------
-# Application generation
-# ---------------------------------------------------------------------------
-
 def _generate_applications(db: Session) -> list[MerchantApplication]:
     now = datetime.now(timezone.utc)
 
-    # Resolve sales reps up front so we do not query per row.
     reps = {
         email: db.query(User).filter(User.email == email).first()
         for email in SALES_REPS
     }
     for email, rep in reps.items():
         if rep is None:
-            raise RuntimeError(f"Missing sales rep: {email}. Run `python -m app.seed` first.")
+            raise RuntimeError(
+                f"Missing sales rep: {email}. Run `python -m app.seed` first."
+            )
 
     created: list[MerchantApplication] = []
-    # Precompute the status sequence so distribution is exact.
     statuses = _status_sequence(TOTAL_APPLICATIONS)
 
     for index in range(TOTAL_APPLICATIONS):
@@ -192,11 +182,15 @@ def _generate_applications(db: Session) -> list[MerchantApplication]:
         merchant_name = _merchant_name(index)
         business_type = RNG.choice(BUSINESS_TYPES)
         annual_revenue = RNG.randint(60_000, 2_500_000)
-        slug = merchant_name.lower().replace(" ", "").replace("&", "and").replace(".", "")
+        slug = (
+            merchant_name.lower()
+            .replace(" ", "")
+            .replace("&", "and")
+            .replace(".", "")
+        )
         contact_email = f"contact@{slug}.test"
         contact_phone = f"+1-555-{RNG.randint(1000, 9999)}"
 
-        # Backdate creation time so sorting produces a plausible order.
         days_ago = RNG.randint(0, 90)
         created_at = now - timedelta(days=days_ago, hours=RNG.randint(0, 23))
         submitted_at = (
@@ -225,32 +219,24 @@ def _generate_applications(db: Session) -> list[MerchantApplication]:
 
 
 def _merchant_name(index: int) -> str:
-    """Deterministic unique merchant name so filtering is predictable."""
     prefix = NAME_PREFIXES[index % len(NAME_PREFIXES)]
     suffix = NAME_SUFFIXES[(index * 7) % len(NAME_SUFFIXES)]
     return f"{prefix} {suffix}"
 
 
 def _status_sequence(total: int) -> list[ApplicationStatus]:
-    """Produce a deterministic list of statuses matching the distribution."""
     sequence: list[ApplicationStatus] = []
     for status, ratio in STATUS_DISTRIBUTION:
         count = int(round(total * ratio))
         sequence.extend([status] * count)
 
-    # Pad / trim to exactly `total`.
     while len(sequence) < total:
         sequence.append(ApplicationStatus.SUBMITTED)
     sequence = sequence[:total]
 
-    # Shuffle so statuses are interleaved, not blocked by group.
     RNG.shuffle(sequence)
     return sequence
 
-
-# ---------------------------------------------------------------------------
-# Review generation
-# ---------------------------------------------------------------------------
 
 def _insert_reviews(db: Session, apps: list[MerchantApplication]) -> None:
     reviewer = db.query(User).filter(User.email == REVIEWER_EMAIL).first()
@@ -258,8 +244,8 @@ def _insert_reviews(db: Session, apps: list[MerchantApplication]) -> None:
         raise RuntimeError(f"Missing reviewer: {REVIEWER_EMAIL}")
 
     for app in apps:
-        decision, comment = _review_for_status(app.status)
-        if decision is None:
+        action, decision, comment = _review_for_status(app.status)
+        if action is None:
             continue
 
         review_created = (app.submitted_at or app.created_at) + timedelta(
@@ -269,6 +255,7 @@ def _insert_reviews(db: Session, apps: list[MerchantApplication]) -> None:
             Review(
                 application_id=app.id,
                 reviewer_id=reviewer.id,
+                action=action,
                 decision=decision,
                 comment=comment,
                 created_at=review_created,
@@ -280,20 +267,28 @@ def _insert_reviews(db: Session, apps: list[MerchantApplication]) -> None:
 
 def _review_for_status(
     status: ApplicationStatus,
-) -> tuple[RiskDecision | None, str | None]:
-    """Return the appropriate risk decision and comment for a status, if any."""
+) -> tuple[ReviewAction | None, RiskDecision | None, str | None]:
+    """Return the matching (action, decision, comment) for a given status."""
     if status == ApplicationStatus.APPROVED:
-        return RNG.choice([RiskDecision.LOW, RiskDecision.LOW, RiskDecision.MEDIUM]), RNG.choice(APPROVED_COMMENTS)
+        return (
+            ReviewAction.APPROVE,
+            RNG.choice([RiskDecision.LOW, RiskDecision.LOW, RiskDecision.MEDIUM]),
+            RNG.choice(APPROVED_COMMENTS),
+        )
     if status == ApplicationStatus.REJECTED:
-        return RiskDecision.REJECTED, RNG.choice(REJECTED_COMMENTS)
+        return (
+            ReviewAction.REJECT,
+            RiskDecision.REJECTED,
+            RNG.choice(REJECTED_COMMENTS),
+        )
     if status == ApplicationStatus.UNDER_REVIEW:
-        return RNG.choice([RiskDecision.MEDIUM, RiskDecision.HIGH]), RNG.choice(UNDER_REVIEW_COMMENTS)
-    return None, None
+        return (
+            ReviewAction.UNDER_REVIEW,
+            RNG.choice([RiskDecision.MEDIUM, RiskDecision.HIGH]),
+            RNG.choice(UNDER_REVIEW_COMMENTS),
+        )
+    return None, None, None
 
-
-# ---------------------------------------------------------------------------
-# Reporting
-# ---------------------------------------------------------------------------
 
 def _count_by_status(db: Session) -> dict[str, int]:
     from sqlalchemy import func

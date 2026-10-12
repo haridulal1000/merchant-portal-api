@@ -7,13 +7,26 @@ from app.models import (
     ApplicationStatus,
     MerchantApplication,
     Review,
-    RiskDecision,
+    ReviewAction,
     Role,
     User,
 )
 from app.schemas import ReviewCreate, ReviewOut
 
 router = APIRouter(prefix="/applications", tags=["Reviews"])
+
+# Maps the reviewer's chosen action to the resulting application status.
+ACTION_TO_STATUS: dict[ReviewAction, ApplicationStatus] = {
+    ReviewAction.APPROVE: ApplicationStatus.APPROVED,
+    ReviewAction.REJECT: ApplicationStatus.REJECTED,
+    ReviewAction.UNDER_REVIEW: ApplicationStatus.UNDER_REVIEW,
+}
+
+# Actions can only be recorded against applications in an active review state.
+ACTIONABLE_STATUSES = {
+    ApplicationStatus.SUBMITTED,
+    ApplicationStatus.UNDER_REVIEW,
+}
 
 
 @router.get("/{application_id}/reviews", response_model=list[ReviewOut])
@@ -44,25 +57,38 @@ def create_review(
     current_user: User = Depends(require_roles(Role.REVIEWER, Role.ADMIN)),
     db: Session = Depends(get_db),
 ):
-    """Record a risk decision (REVIEWER or ADMIN only). Updates the application status."""
+    """
+    Record a reviewer action and the accompanying risk decision.
+
+    The action determines the resulting application status; the risk
+    decision is the reviewer's independent assessment. Both are stored
+    on the review row and become part of the audit history.
+    """
     app = db.get(MerchantApplication, application_id)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    if app.status not in ACTIONABLE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot record a decision on an application in status "
+                f"{app.status.value}. Only SUBMITTED or UNDER_REVIEW "
+                f"applications can be actioned."
+            ),
+        )
+
     review = Review(
         application_id=application_id,
         reviewer_id=current_user.id,
+        action=payload.action,
         decision=payload.decision,
         comment=payload.comment,
     )
     db.add(review)
 
+    app.status = ACTION_TO_STATUS[payload.action]
     app.risk_decision = payload.decision
-    app.status = (
-        ApplicationStatus.REJECTED
-        if payload.decision == RiskDecision.REJECTED
-        else ApplicationStatus.APPROVED
-    )
 
     db.commit()
     db.refresh(review)
